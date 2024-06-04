@@ -117,6 +117,10 @@ with gr.Blocks(css=css) as demo:
     gr.Markdown(
         """
 # Phased Consistency Model  
+
+Phased Consistency Model (PCM) is an image generation technique that addresses the limitations of the Latent Consistency Model (LCM) in high-resolution and text-conditioned image generation.
+PCM outperforms LCM across various generation settings and achieves state-of-the-art results in both image and video generation.
+
 [[paper](https://huggingface.co/papers/2405.18407)] [[arXiv](https://arxiv.org/abs/2405.18407)]  [[code](https://github.com/G-U-N/Phased-Consistency-Model)] [[project page](https://g-u-n.github.io/projects/pcm)]
 """
     )
