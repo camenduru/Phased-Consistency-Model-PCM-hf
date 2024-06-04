@@ -150,6 +150,17 @@ with gr.Blocks(css=css) as demo:
     img = gr.Image(label="PCM Image")
     gr.Examples(
         examples=[
+            [" astronaut walking on the moon", "4-Step", 4],
+            [
+                "Photo of a dramatic cliffside lighthouse in a storm, waves crashing, symbol of guidance and resilience.",
+                "8-Step",
+                8,
+            ],
+            [
+                "Vincent vangogh style, painting, a boy, clouds in the sky",
+                "Normal CFG 4-Step",
+                4,
+            ],
             [
                 "Echoes of a forgotten song drift across the moonlit sea, where a ghost ship sails, its spectral crew bound to an eternal quest for redemption.",
                 "4-Step",
@@ -174,7 +185,7 @@ with gr.Blocks(css=css) as demo:
 
     gr.on(
         fn=generate_image,
-        triggers=[prompt.submit, submit_sdxl.click],
+        triggers=[ckpt.change, prompt.submit, submit_sdxl.click],
         inputs=[prompt, ckpt, steps],
         outputs=[img],
     )
