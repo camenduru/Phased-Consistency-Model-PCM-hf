@@ -1,33 +1,39 @@
 import gradio as gr
 import torch
-from diffusers import StableDiffusionXLPipeline
+from diffusers import StableDiffusionXLPipeline, StableDiffusionPipeline, LCMScheduler
 from diffusers.schedulers import TCDScheduler
+
 import spaces
 from PIL import Image
 
 SAFETY_CHECKER = True
 
-# Constants
-base = "stabilityai/stable-diffusion-xl-base-1.0"
-repo = "ByteDance/SDXL-Lightning"
 checkpoints = {
-    "2-Step": ["pcm_sdxl_smallcfg_2step_converted.safetensors", 2, 0.0],
-    "4-Step": ["pcm_sdxl_smallcfg_4step_converted.safetensors", 4, 0.0],
-    "8-Step": ["pcm_sdxl_smallcfg_8step_converted.safetensors", 8, 0.0],
-    "16-Step": ["pcm_sdxl_smallcfg_16step_converted.safetensors", 16, 0.0],
-    "Normal CFG 4-Step": ["pcm_sdxl_normalcfg_4step_converted.safetensors", 4, 7.5],
-    "Normal CFG 8-Step": ["pcm_sdxl_normalcfg_8step_converted.safetensors", 8, 7.5],
-    "Normal CFG 16-Step": ["pcm_sdxl_normalcfg_16step_converted.safetensors", 16, 7.5],
-    "LCM-Like LoRA": ["pcm_sdxl_lcmlike_lora_converted.safetensors", 16, 0.0],
+    "2-Step": ["pcm_{}_smallcfg_2step_converted.safetensors", 2, 0.0],
+    "4-Step": ["pcm_{}_smallcfg_4step_converted.safetensors", 4, 0.0],
+    "8-Step": ["pcm_{}_smallcfg_8step_converted.safetensors", 8, 0.0],
+    "16-Step": ["pcm_{}_smallcfg_16step_converted.safetensors", 16, 0.0],
+    "Normal CFG 4-Step": ["pcm_{}_normalcfg_4step_converted.safetensors", 4, 7.5],
+    "Normal CFG 8-Step": ["pcm_{}_normalcfg_8step_converted.safetensors", 8, 7.5],
+    "Normal CFG 16-Step": ["pcm_{}_normalcfg_16step_converted.safetensors", 16, 7.5],
+    "LCM-Like LoRA": [
+        "pcm_{}_lcmlike_lora_converted.safetensors",
+        4,
+        0.0,
+    ],
 }
 
 
 loaded = None
 
-# Ensure model and scheduler are initialized in GPU-enabled function
 if torch.cuda.is_available():
-    pipe = StableDiffusionXLPipeline.from_pretrained(
-        base, torch_dtype=torch.float16, variant="fp16"
+    pipe_sdxl = StableDiffusionXLPipeline.from_pretrained(
+        "stabilityai/stable-diffusion-xl-base-1.0",
+        torch_dtype=torch.float16,
+        variant="fp16",
+    ).to("cuda")
+    pipe_sd15 = StableDiffusionPipeline.from_pretrained(
+        "runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16, variant="fp16"
     ).to("cuda")
 
 if SAFETY_CHECKER:
@@ -52,29 +58,35 @@ if SAFETY_CHECKER:
         return images, has_nsfw_concepts
 
 
-# Function
 @spaces.GPU(enable_queue=True)
-def generate_image(prompt, ckpt):
+def generate_image(
+    prompt,
+    ckpt,
+    num_inference_steps,
+    progress=gr.Progress(track_tqdm=True),
+    mode="sdxl",
+):
     global loaded
-    print(prompt, ckpt)
-
-    checkpoint = checkpoints[ckpt][0]
-    num_inference_steps = checkpoints[ckpt][1]
+    checkpoint = checkpoints[ckpt][0].format(mode)
     guidance_scale = checkpoints[ckpt][2]
+    pipe = pipe_sdxl if mode == "sdxl" else pipe_sd15
 
-    if loaded != num_inference_steps:
-        pipe.scheduler = TCDScheduler(
-            num_train_timesteps=1000,
-            beta_start=0.00085,
-            beta_end=0.012,
-            beta_schedule="scaled_linear",
-            timestep_spacing="trailing",
-        )
+    if loaded != (ckpt + mode):
         pipe.load_lora_weights(
-            "wangfuyun/PCM_Weights", weight_name=checkpoint, subfolder="sdxl"
+            "wangfuyun/PCM_Weights", weight_name=checkpoint, subfolder=mode
         )
+        loaded = ckpt + mode
 
-        loaded = num_inference_steps
+        if ckpt == "LCM-Like LoRA":
+            pipe.scheduler = LCMScheduler()
+        else:
+            pipe.scheduler = TCDScheduler(
+                num_train_timesteps=1000,
+                beta_start=0.00085,
+                beta_end=0.012,
+                beta_schedule="scaled_linear",
+                timestep_spacing="trailing",
+            )
 
     results = pipe(
         prompt, num_inference_steps=num_inference_steps, guidance_scale=guidance_scale
@@ -89,7 +101,12 @@ def generate_image(prompt, ckpt):
     return results.images[0]
 
 
-# Gradio Interface
+def update_steps(ckpt):
+    num_inference_steps = checkpoints[ckpt][1]
+    if ckpt == "LCM-Like LoRA":
+        return gr.update(interactive=True, value=num_inference_steps)
+    return gr.update(interactive=False, value=num_inference_steps)
+
 
 css = """
 .gradio-container {
@@ -97,31 +114,76 @@ css = """
 }
 """
 with gr.Blocks(css=css) as demo:
-    gr.HTML("<h1><center>SDXL-Lightning ⚡</center></h1>")
-    gr.HTML(
-        "<p><center>Lightning-fast text-to-image generation</center></p><p><center><a href='https://huggingface.co/ByteDance/SDXL-Lightning'>https://huggingface.co/ByteDance/SDXL-Lightning</a></center></p>"
+    gr.Markdown(
+        """
+# Phased Consistency Model  
+[[paper](https://huggingface.co/papers/2405.18407)] [[arXiv](https://arxiv.org/abs/2405.18407)]  [[code](https://github.com/G-U-N/Phased-Consistency-Model)] [[project page](https://g-u-n.github.io/projects/pcm)]
+"""
     )
     with gr.Group():
         with gr.Row():
-            prompt = gr.Textbox(label="Enter your prompt (English)", scale=8)
+            prompt = gr.Textbox(label="Prompt", scale=8)
             ckpt = gr.Dropdown(
                 label="Select inference steps",
                 choices=list(checkpoints.keys()),
                 value="4-Step",
-                interactive=True,
             )
-            submit = gr.Button(scale=1, variant="primary")
-    img = gr.Image(label="SDXL-Lightning Generated Image")
+            steps = gr.Slider(
+                label="Number of Inference Steps",
+                minimum=1,
+                maximum=20,
+                step=1,
+                value=4,
+                interactive=False,
+            )
+            ckpt.change(
+                fn=update_steps,
+                inputs=[ckpt],
+                outputs=[steps],
+                queue=False,
+                show_progress=False,
+            )
 
-    prompt.submit(
+            submit_sdxl = gr.Button("Run on SDXL", scale=1)
+            submit_sd15 = gr.Button("Run on SD15", scale=1)
+
+    img = gr.Image(label="PCM Image")
+    gr.Examples(
+        examples=[
+            [
+                "Echoes of a forgotten song drift across the moonlit sea, where a ghost ship sails, its spectral crew bound to an eternal quest for redemption.",
+                "4-Step",
+                4,
+            ],
+            [
+                "Roger rabbit as a real person, photorealistic, cinematic.",
+                "16-Step",
+                16,
+            ],
+            [
+                "tanding tall amidst the ruins, a stone golem awakens, vines and flowers sprouting from the crevices in its body.",
+                "LCM-Like LoRA",
+                4,
+            ],
+        ],
+        inputs=[prompt, ckpt, steps],
+        outputs=[img],
         fn=generate_image,
-        inputs=[prompt, ckpt],
-        outputs=img,
-    )
-    submit.click(
-        fn=generate_image,
-        inputs=[prompt, ckpt],
-        outputs=img,
+        cache_examples="lazy",
     )
 
-demo.queue().launch()
+    gr.on(
+        fn=generate_image,
+        triggers=[prompt.submit, submit_sdxl.click],
+        inputs=[prompt, ckpt, steps],
+        outputs=[img],
+    )
+    gr.on(
+        fn=lambda *args: generate_image(*args, mode="sd15"),
+        triggers=[submit_sd15.click],
+        inputs=[prompt, ckpt, steps],
+        outputs=[img],
+    )
+
+
+demo.queue(api_open=False).launch(show_api=False)
